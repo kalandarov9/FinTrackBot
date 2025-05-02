@@ -1,0 +1,36 @@
+version: "3.8"
+services:
+  bot:
+    build: .
+    container_name: fintrackbot
+    restart: always
+    env_file:
+      - .env
+      # Можно добавить переменные для подключения к БД, например:
+      - .env.db
+    depends_on:
+      - db
+    networks:
+      - app_net
+
+  db:
+    image: postgres:14
+    container_name: fintrackbot_db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: fintrackdb
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - app_net
+
+volumes:
+  pgdata:
+
+networks:
+  app_net:
+    driver: bridge
