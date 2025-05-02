@@ -325,48 +325,59 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current_date = datetime.datetime.now()
     current_month = current_date.month
     current_year = current_date.year
+    previous_month = current_month - 1 if current_month > 1 else 12
+    previous_year = current_year if current_month > 1 else current_year - 1
     current_month_total = 0
+    previous_month_total = 0
     current_year_total = 0
-    expenses_by_month = {}
+    current_month_expenses = []
+    previous_month_expenses = []
 
+    # Расчет итогов по месяцам и году
     for row in rows:
         amount, category, date, username = row
         try:
             month, day, year = date.split('/')
             month = int(month)
             year = int(year)
-            month_key = f"{month:02d}/{year}"
             if month == current_month and year == current_year:
                 current_month_total += amount
+                current_month_expenses.append(
+                    (amount, category, date, username))
+            if month == previous_month and year == previous_year:
+                previous_month_total += amount
+                previous_month_expenses.append(
+                    (amount, category, date, username))
             if year == current_year:
                 current_year_total += amount
         except Exception:
-            month_key = "Неизвестно"
-        if month_key not in expenses_by_month:
-            expenses_by_month[month_key] = []
-        expenses_by_month[month_key].append((amount, category, date, username))
+            pass
 
-    report_text = "Ваши расходы:\n\n"
+    # Формирование названий месяцев
     month_names = {
         1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель", 5: "Май",
         6: "Июнь", 7: "Июль", 8: "Август", 9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь"
     }
     current_month_name = month_names.get(current_month, str(current_month))
-    report_text += f"💰 Расходы за {current_month_name} {current_year}: {current_month_total:.2f}$\n"
-    report_text += f"💰 Общие расходы за {current_year} год: {current_year_total:.2f}$\n\n"
-    grand_total = 0
-    sorted_months = sorted(expenses_by_month.keys(),
-                           key=lambda x: (int(x.split('/')[1]) if '/' in x and x != "Неизвестно" else 0,
-                                          int(x.split('/')[0]) if '/' in x and x != "Неизвестно" else 0))
-    for month_key in sorted_months:
-        month_entries = expenses_by_month[month_key]
-        month_total = sum(entry[0] for entry in month_entries)
-        grand_total += month_total
-        report_text += f"== {month_key} — {month_total:.2f}$ ==\n"
-        for amount, category, date, username in month_entries:
+    previous_month_name = month_names.get(previous_month, str(previous_month))
+
+    # Формируем отчет
+    report_text = "Ваши расходы:\n\n"
+
+    # Выводим расходы текущего месяца
+    if current_month_expenses:
+        report_text += f"== {current_month_name} {current_year} ==\n"
+        for amount, category, date, username in current_month_expenses:
             report_text += f"{date}: {amount}$ — {category} (добавил: @{username})\n"
         report_text += "\n"
-    report_text += f"Общая сумма всех расходов: {grand_total:.2f}$\n"
+    else:
+        report_text += f"За {current_month_name} {current_year} расходов не найдено.\n\n"
+
+    # Добавляем итоги по месяцам и году в конце отчета
+    report_text += f"💰 Расходы за {previous_month_name} {previous_year}: {previous_month_total:.2f}$\n"
+    report_text += f"💰 Расходы за {current_month_name} {current_year}: {current_month_total:.2f}$\n"
+    report_text += f"💰 Общие расходы за {current_year} год: {current_year_total:.2f}$"
+
     await update.message.reply_text(report_text)
     return ConversationHandler.END
 
