@@ -234,12 +234,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Доступные команды:\n"
         "/start - начать работу с ботом\n"
         "/add - добавить новый расход\n"
-        "/report - получить подробный отчёт о расходах\n"
+        "/report - получить отчёт о расходах за текущий месяц\n"
+        "/prev_month - подробный отчёт за предыдущий месяц\n"
+        "/month MM/YYYY - отчёт за конкретный месяц\n"
         "/clear - очистить все записи о расходах\n"
         "/categories - управление категориями\n"
         "/add_category - добавить новую категорию\n"
         "/delete_category - удалить категорию\n"
-        "/month - отчёт за конкретный месяц, формат: /month MM/YYYY"
     )
     await update.message.reply_text(help_text)
     return ConversationHandler.END
@@ -373,12 +374,43 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         report_text += f"За {current_month_name} {current_year} расходов не найдено.\n\n"
 
-    # Добавляем итоги по месяцам и году в конце отчета
-    report_text += f"💰 Расходы за {previous_month_name} {previous_year}: {previous_month_total:.2f}$\n"
-    report_text += f"💰 Расходы за {current_month_name} {current_year}: {current_month_total:.2f}$\n"
-    report_text += f"💰 Общие расходы за {current_year} год: {current_year_total:.2f}$"
+    # Добавляем итог по месяцу и году в конце отчета
+    summary_text = f"📊 ИТОГИ:\n\n"
+    summary_text += f"💰 Расходы за {previous_month_name} {previous_year}: {previous_month_total:.2f}$\n"
+    summary_text += f"💰 Расходы за {current_month_name} {current_year}: {current_month_total:.2f}$\n"
+    summary_text += f"💰 Общие расходы за {current_year} год: {current_year_total:.2f}$"
 
-    await update.message.reply_text(report_text)
+    # Функция для разбивки длинного списка трат на части
+    async def send_expenses_in_chunks(expenses_list, month_name, year, title_prefix=""):
+        if not expenses_list:
+            return
+
+        chunk_text = f"{title_prefix}== {month_name} {year} ==\n"
+        max_chunk_length = 3500  # Оставляем место для заголовков
+
+        for amount, category, date, username in expenses_list:
+            expense_line = f"{date}: {amount}$ — {category} (добавил: @{username})\n"
+
+            # Если добавление этой строки превысит лимит, отправляем текущий chunk
+            if len(chunk_text + expense_line) > max_chunk_length:
+                await update.message.reply_text(chunk_text)
+                chunk_text = f"== {month_name} {year} (продолжение) ==\n{expense_line}"
+            else:
+                chunk_text += expense_line
+
+        # Отправляем последний chunk, если есть что отправить
+        if chunk_text.strip() and chunk_text != f"{title_prefix}== {month_name} {year} ==\n":
+            await update.message.reply_text(chunk_text)
+
+    # Отправляем расходы текущего месяца
+    if current_month_expenses:
+        await send_expenses_in_chunks(current_month_expenses, current_month_name, current_year, "Ваши расходы:\n\n")
+    else:
+        await update.message.reply_text(f"Ваши расходы:\n\nЗа {current_month_name} {current_year} расходов не найдено.")
+
+    # Отправляем итоговую информацию
+    await update.message.reply_text(summary_text)
+
     return ConversationHandler.END
 
 # Очистка расходов (удаление записей в базе)
@@ -467,7 +499,6 @@ async def monthly_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     # Получаем расходы всех пользователей за месяц
-    # Эту функцию тоже нужно изменить!
     rows = get_monthly_expenses(month, year)
     if not rows:
         await update.message.reply_text(f"За {month:02d}/{year} расходов не найдено.")
@@ -477,31 +508,130 @@ async def monthly_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель", 5: "Май",
         6: "Июнь", 7: "Июль", 8: "Август", 9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь"
     }
-    report_text = f"Отчет за {month_names.get(month, str(month))} {year}:\n\n"
+
     total = 0
     category_totals = {}
     user_totals = {}
 
+    # Собираем статистику
     for amount, category, date, username in rows:
-        report_text += f"{date}: {amount:.2f}$ — {category} (добавил: @{username})\n"
         total += amount
         category_totals[category] = category_totals.get(category, 0) + amount
         user_totals[username] = user_totals.get(username, 0) + amount
 
-    report_text += f"\nВсего за месяц: {total:.2f}$\n\n"
-    report_text += "Расходы по категориям:\n"
-    for cat, cat_total in category_totals.items():
-        report_text += f"{cat}: {cat_total}$\n"
-    report_text += "\nРасходы по пользователям:\n"
-    for user, user_total in user_totals.items():
-        report_text += f"@{user}: {user_total}$\n"
+    # Функция для отправки расходов частями
+    async def send_monthly_expenses_in_chunks():
+        chunk_text = f"Отчет за {month_names.get(month, str(month))} {year}:\n\n"
+        max_chunk_length = 3500
 
-    await update.message.reply_text(report_text)
+        for amount, category, date, username in rows:
+            expense_line = f"{date}: {amount:.2f}$ — {category} (добавил: @{username})\n"
+
+            # Если добавление этой строки превысит лимит, отправляем текущий chunk
+            if len(chunk_text + expense_line) > max_chunk_length:
+                await update.message.reply_text(chunk_text)
+                chunk_text = f"Отчет за {month_names.get(month, str(month))} {year} (продолжение):\n\n{expense_line}"
+            else:
+                chunk_text += expense_line
+
+        # Отправляем последний chunk
+        if chunk_text.strip():
+            await update.message.reply_text(chunk_text)
+
+    # Отправляем все расходы частями
+    await send_monthly_expenses_in_chunks()
+
+    # Отправляем итоговую статистику
+    summary_text = f"\n💰 Всего за месяц: {total:.2f}$\n\n"
+    summary_text += "📊 Расходы по категориям:\n"
+    for cat, cat_total in category_totals.items():
+        summary_text += f"• {cat}: {cat_total:.2f}$\n"
+    summary_text += "\n👥 Расходы по пользователям:\n"
+    for user, user_total in user_totals.items():
+        summary_text += f"• @{user}: {user_total:.2f}$\n"
+
+    await update.message.reply_text(summary_text)
+    return ConversationHandler.END
+
+
+# Отчет за предыдущий месяц
+async def previous_month_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    current_date = datetime.datetime.now()
+    current_month = current_date.month
+    current_year = current_date.year
+    previous_month = current_month - 1 if current_month > 1 else 12
+    previous_year = current_year if current_month > 1 else current_year - 1
+
+    # Получаем расходы за предыдущий месяц
+    rows = get_monthly_expenses(previous_month, previous_year)
+    if not rows:
+        month_names = {
+            1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель", 5: "Май",
+            6: "Июнь", 7: "Июль", 8: "Август", 9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь"
+        }
+        previous_month_name = month_names.get(
+            previous_month, str(previous_month))
+        await update.message.reply_text(f"За {previous_month_name} {previous_year} расходов не найдено.")
+        return ConversationHandler.END
+
+    month_names = {
+        1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель", 5: "Май",
+        6: "Июнь", 7: "Июль", 8: "Август", 9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь"
+    }
+    previous_month_name = month_names.get(previous_month, str(previous_month))
+
+    total = 0
+    category_totals = {}
+    user_totals = {}
+
+    # Собираем статистику
+    for amount, category, date, username in rows:
+        total += amount
+        category_totals[category] = category_totals.get(category, 0) + amount
+        user_totals[username] = user_totals.get(username, 0) + amount
+
+    # Функция для отправки расходов частями
+    async def send_previous_month_expenses():
+        chunk_text = f"📅 Подробный отчет за {previous_month_name} {previous_year}:\n\n"
+        max_chunk_length = 3500
+
+        for amount, category, date, username in rows:
+            expense_line = f"{date}: {amount:.2f}$ — {category} (добавил: @{username})\n"
+
+            # Если добавление этой строки превысит лимит, отправляем текущий chunk
+            if len(chunk_text + expense_line) > max_chunk_length:
+                await update.message.reply_text(chunk_text)
+                chunk_text = f"📅 {previous_month_name} {previous_year} (продолжение):\n\n{expense_line}"
+            else:
+                chunk_text += expense_line
+
+        # Отправляем последний chunk
+        if chunk_text.strip():
+            await update.message.reply_text(chunk_text)
+
+    # Отправляем все расходы частями
+    await send_previous_month_expenses()
+
+    # Отправляем итоговую статистику
+    summary_text = f"\n💰 Всего за {previous_month_name} {previous_year}: {total:.2f}$\n\n"
+    summary_text += "📊 Расходы по категориям:\n"
+    for cat, cat_total in category_totals.items():
+        summary_text += f"• {cat}: {cat_total:.2f}$\n"
+    summary_text += "\n👥 Расходы по пользователям:\n"
+    for user, user_total in user_totals.items():
+        summary_text += f"• @{user}: {user_total:.2f}$\n"
+
+    await update.message.reply_text(summary_text)
     return ConversationHandler.END
 
 
 def main():
-    initialize_db()  # Создаем таблицы, если их нет
+    try:
+        initialize_db()  # Создаем таблицы, если их нет
+    except Exception as e:
+        logger.error(f"Ошибка инициализации базы данных: {e}")
+        return
+
     app = ApplicationBuilder().token(TOKEN).build()
 
     add_expense_handler = ConversationHandler(
@@ -511,7 +641,7 @@ def main():
             CATEGORY: [CallbackQueryHandler(category_selected, pattern="^cat_")],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
-        allow_reentry=True  # добавлено, чтобы разговор можно было запускать повторно
+        allow_reentry=True
     )
 
     add_category_handler = ConversationHandler(
@@ -528,12 +658,13 @@ def main():
         states={
             "CONFIRM_DELETE": [CallbackQueryHandler(confirm_delete_category, pattern="^del_")],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[CommandHandler("cancel", cancel)]
     )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("report", report))
+    app.add_handler(CommandHandler("prev_month", previous_month_report))
     app.add_handler(CommandHandler("clear", clear))
     app.add_handler(CommandHandler("confirmclear", confirm_clear))
     app.add_handler(CommandHandler("categories", list_categories))
@@ -543,7 +674,10 @@ def main():
     app.add_handler(CommandHandler("month", monthly_report))
 
     print("Starting bot polling...")
-    app.run_polling()
+    try:
+        app.run_polling(drop_pending_updates=True)
+    except Exception as e:
+        logger.error(f"Ошибка при запуске бота: {e}")
 
 
 if __name__ == "__main__":

@@ -1,13 +1,15 @@
-version: "3.8"
 services:
   bot:
     build: .
     container_name: fintrackbot
     restart: always
-    env_file:
-      - .env
-      # Можно добавить переменные для подключения к БД, например:
-      - .env.db
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=fintrackdb
     depends_on:
       - db
     networks:
